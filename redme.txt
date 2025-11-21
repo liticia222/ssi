@@ -1,0 +1,397 @@
+OK, nickel, on va poser **une vraie structure de projet** propre avant d’écrire une seule ligne de code.
+On suit bien le déroulé du PDF RSA (génération des clés, chiffrement, déchiffrement, ASCII…) 
+
+---
+
+## 1. Arborescence générale du projet
+
+Je te propose un projet comme ça :
+
+```text
+rsa_reseau/
+│
+├── common/
+│   ├── rsa_core.py          # Toute la logique RSA (maths, clés, chiffrement, déchiffrement)
+│   └── net_utils.py         # Fonctions réseau communes (envoi/réception fiable)
+│
+├── alice/
+│   ├── alice_keys.py        # Génération & sauvegarde des clés d’Alice
+│   ├── alice_encrypt.py     # Fonctions de chiffrement/déchiffrement côté Alice
+│   ├── alice_client.py      # Programme client pour envoyer un message à Bob
+│   ├── alice_server.py      # Programme serveur pour recevoir des messages de Bob
+│   ├── alice_public.key     # FICHIER clé publique d’Alice (n, e)
+│   └── alice_private.key    # FICHIER clé privée d’Alice (n, u)
+│
+└── bob/
+    ├── bob_keys.py          # Génération & sauvegarde des clés de Bob
+    ├── bob_encrypt.py       # Fonctions de chiffrement/déchiffrement côté Bob
+    ├── bob_client.py        # Programme client pour envoyer un message à Alice
+    ├── bob_server.py        # Programme serveur pour recevoir des messages d’Alice
+    ├── bob_public.key       # FICHIER clé publique de Bob (n, e)
+    └── bob_private.key      # FICHIER clé privée de Bob (n, u)
+```
+
+* **`common/`** : tout ce qui est partagé (maths RSA, fonctions réseau).
+* **`alice/`** : tout ce qui est spécifique à Alice (ses fichiers de clés, ses programmes).
+* **`bob/`** : pareil pour Bob.
+
+---
+
+## 2. Contenu des modules
+
+### 2.1. `common/rsa_core.py`
+
+C’est le cœur du RSA, commun aux deux :
+
+* `generate_keys(bits)`
+
+  * génère `p`, `q`, calcule `n`, `m`, choisit `e`, calcule `u` (Euclide étendu)
+  * renvoie `(n, e)` et `(n, u)`
+
+* `encrypt_int(m, n, e)` → `c = m^e mod n`
+
+* `decrypt_int(c, n, u)` → `m = c^u mod n`
+
+* Fonctions pour gérer le texte comme dans le PDF :
+
+  * `text_to_int_list(message)` → liste d’entiers (ASCII)
+  * `int_list_to_text(lst)` → texte
+
+Tu restes très proche des sections 2–5 du sujet (création des clés, chiffrement, déchiffrement) 
+
+---
+
+### 2.2. `common/net_utils.py`
+
+Quelques petites fonctions utilitaires pour le réseau (TCP) :
+
+* `send_json(sock, obj)` : envoie un dictionnaire Python transformé en JSON (pour transférer les clés publiques, messages, etc.).
+* `recv_json(sock)` : lit et decode le JSON reçu.
+
+Ça évite de réécrire la même chose dans Alice et Bob.
+
+---
+
+## 3. Côté Alice
+
+### 3.1. `alice/alice_keys.py`
+
+Rôle : **générer et stocker** les clés d’Alice dans deux fichiers séparés.
+
+* utilise `generate_keys()` de `rsa_core.py`
+* écrit :
+
+  * `alice_public.key` : texte avec `n` et `e`
+  * `alice_private.key` : texte avec `n` et `u`
+
+Format très simple par ex. :
+
+```text
+# alice_public.key
+n=5141
+e=7
+
+# alice_private.key
+n=5141
+u=4279
+```
+
+### 3.2. `alice/alice_encrypt.py`
+
+Rôle : regrouper les fonctions utiles pour les programmes client/serveur d’Alice :
+
+* `load_public_key(path)` → lit `n`, `e` depuis un fichier
+* `load_private_key(path)` → lit `n`, `u`
+* `encrypt_message(message, n, e)`
+* `decrypt_message(cipher_list, n, u)`
+
+### 3.3. `alice/alice_server.py`
+
+Rôle : Alice écoute sur un port pour recevoir un message chiffré de Bob.
+
+Scénario typique :
+
+1. Charge **sa propre clé privée** (`alice_private.key`) pour déchiffrer.
+2. Ouvre un socket TCP serveur : `bind( ('0.0.0.0', PORT_ALICE) )`, `listen()`, `accept()`.
+3. Reçoit d’abord la clé publique de Bob (ou pas, selon ton protocole).
+4. Reçoit un message chiffré (liste d’entiers).
+5. Déchiffre avec `decrypt_message` et affiche le texte.
+
+### 3.4. `alice/alice_client.py`
+
+Rôle : envoyer un message à Bob (Bob a un serveur qui écoute).
+
+Scénario typique :
+
+1. Charge la **clé publique de Bob** (fichier `bob_public.key` COPIÉ sur la machine d’Alice).
+2. Demande à l’utilisateur : `input("Message à envoyer à Bob : ")`.
+3. Chiffre le message avec la clé publique de Bob.
+4. Se connecte au serveur de Bob (`socket`, `connect((ip_bob, PORT_BOB))`).
+5. Envoie la liste chiffrée via `send_json`.
+
+---
+
+## 4. Côté Bob
+
+Exactement la même logique, mais dans le dossier `bob/`.
+
+### 4.1. `bob/bob_keys.py`
+
+Génère et écrit `bob_public.key` et `bob_private.key`.
+
+### 4.2. `bob/bob_encrypt.py`
+
+Les mêmes fonctions que pour Alice (`load_public_key`, `encrypt_message`, etc.)
+Tu peux même réutiliser le même code et juste changer les noms de fichiers.
+
+### 4.3. `bob/bob_server.py`
+
+Bob écoute sur un port pour recevoir des messages d’Alice.
+Structure miroir de `alice_server.py`.
+
+### 4.4. `bob/bob_client.py`
+
+Bob peut aussi envoyer des messages à Alice.
+Structure miroir de `alice_client.py`.
+
+---
+
+## 5. Scénario complet (comment tu l’utilises en vrai)
+
+1. Sur le **PC d’Alice**
+
+   * lancer `alice_keys.py` → crée `alice_public.key`, `alice_private.key`.
+
+2. Sur le **PC de Bob**
+
+   * lancer `bob_keys.py` → crée `bob_public.key`, `bob_private.key`.
+
+3. **Échange de clés publiques**
+
+   * copier `alice_public.key` sur le PC de Bob (dans `bob/` par ex.)
+   * copier `bob_public.key` sur le PC d’Alice (dans `alice/`)
+
+4. Pour que **Bob reçoive** un message :
+
+   * sur Bob : lancer `bob_server.py` (il attend sur un port).
+   * sur Alice : lancer `alice_client.py`, taper un message, il est chiffré et envoyé.
+
+5. Pour que **Alice reçoive** :
+
+   * sur Alice : lancer `alice_server.py`.
+   * sur Bob : lancer `bob_client.py`.
+
+Ainsi :
+
+* chacun a **son fichier de clé privée**, **son fichier de clé publique**,
+* chacun a **ses scripts de chiffrement/déchiffrement**,
+* ils se parlent par **client/serveur TCP**.
+
+---
+
+## 6. Prochaine étape
+
+Maintenant qu’on a la **structure claire**, je peux :
+
+* soit te donner **tout le code de `common/rsa_core.py` + les scripts de clés (alice_keys/bob_keys)**,
+* soit commencer par **un côté (par ex. Bob serveur, Alice client)** pour que tu testes rapidement puis dupliques.
+
+Dis-moi ce que tu préfères que je code en premier :
+➡️ le **cœur RSA (`rsa_core.py` + `alice_keys.py` + `bob_keys.py`)**
+ou directement un côté **Bob serveur / Alice client** prêt à exécuter ?
+Je pars du principe que tu as **2 vrais PC différents** sur le même réseau (Wi-Fi/ethernet), avec Python installé sur les deux.
+On va voir :
+
+1. **La structure des fichiers sur chaque PC**
+2. **Où mettre la comparaison du message reçu / message original** 
+
+---
+
+## 1️⃣ Structure côté *Alice* (PC 1)
+
+Sur le PC d’Alice, tu peux avoir un dossier, par exemple :
+
+```text
+C:\rsa_alice\      (ou /home/alice/rsa_alice/)
+│
+├── common/
+│   ├── rsa_core.py        # RSA (génération clés, chiffrement, déchiffrement)
+│   └── net_utils.py       # fonctions d'envoi/réception (JSON, etc.)
+│
+└── alice/
+    ├── alice_keys.py      # génère les clés d’Alice et les enregistre dans des fichiers
+    ├── alice_client.py    # envoie un message à Bob (client TCP)
+    ├── alice_server.py    # reçoit un message de Bob (serveur TCP, optionnel)
+    ├── alice_crypto.py    # utilise rsa_core + charge/sauve les clés
+    ├── alice_public.key   # fichier texte contenant (n, e) d'Alice
+    ├── alice_private.key  # fichier texte contenant (n, u) d'Alice
+    └── bob_public.key     # copie de la clé publique de Bob (pour chiffrer vers Bob)
+```
+
+👉 Sur le PC d’Alice, **elle doit posséder** :
+
+* **sa clé privée** `alice_private.key` (ne sort jamais de son PC)
+* **sa clé publique** `alice_public.key` (peut être copiée)
+* **la clé publique de Bob** `bob_public.key` (copiée depuis le PC de Bob)
+
+---
+
+## 2️⃣ Structure côté *Bob* (PC 2)
+
+Sur le PC de Bob, même idée, mais dossier différent :
+
+```text
+C:\rsa_bob\       (ou /home/bob/rsa_bob/)
+│
+├── common/
+│   ├── rsa_core.py        # même fichier que chez Alice, copié tel quel
+│   └── net_utils.py
+│
+└── bob/
+    ├── bob_keys.py        # génère les clés de Bob
+    ├── bob_server.py      # reçoit le message d’Alice (serveur TCP)
+    ├── bob_client.py      # envoie un message à Alice (client TCP, optionnel)
+    ├── bob_crypto.py      # utilise rsa_core + charge/sauve les clés
+    ├── bob_public.key     # fichier texte (n, e) de Bob
+    ├── bob_private.key    # fichier texte (n, u) de Bob
+    └── alice_public.key   # copie de la clé publique d’Alice (pour chiffrer vers Alice)
+```
+
+👉 Sur le PC de Bob, **il doit posséder** :
+
+* **sa clé privée** `bob_private.key`
+* **sa clé publique** `bob_public.key`
+* **la clé publique d’Alice** `alice_public.key`
+
+---
+
+## 3️⃣ Comment se passe l’échange réseau ?
+
+On prend un scénario simple :
+➡️ **Alice envoie un message à Bob** (Bob a un serveur, Alice un client).
+
+### Étape 0 — Génération des clés (hors ligne)
+
+* Sur Alice : `python alice/alice_keys.py`
+  → crée `alice_public.key`, `alice_private.key`
+* Sur Bob : `python bob/bob_keys.py`
+  → crée `bob_public.key`, `bob_private.key`
+
+Ensuite, tu **échanges seulement les fichiers publics** :
+
+* tu copies `alice_public.key` → sur le PC de Bob (dans `bob/`)
+* tu copies `bob_public.key` → sur le PC d’Alice (dans `alice/`)
+
+Les fichiers `*_private.key` restent chacun sur leur machine.
+
+---
+
+### Étape 1 — Bob attend les messages
+
+Sur le PC de Bob :
+
+```bash
+python bob/bob_server.py
+```
+
+* Il fait un `socket.bind(("0.0.0.0", PORT_BOB))`, `listen()`, `accept()`.
+* Il reçoit :
+
+  * soit le message chiffré
+  * soit un petit JSON `{ "cipher": [ ... ] }`
+
+Il utilise alors `bob_crypto.py` + `bob_private.key` pour **déchiffrer**.
+
+---
+
+### Étape 2 — Alice envoie le message
+
+Sur le PC d’Alice :
+
+```bash
+python alice/alice_client.py
+```
+
+Ce script :
+
+1. lit `bob_public.key`
+
+2. demande à l’utilisateur :
+
+   ```text
+   Entrez le message à envoyer : 
+   ```
+
+3. convertit le texte → liste d’entiers ASCII (comme dans le PDF)
+
+4. chiffre chaque entier avec `(n_bob, e_bob)`
+
+5. envoie le tout via TCP au serveur de Bob (`ip_de_bob`, `PORT_BOB`)
+
+---
+
+## 4️⃣ Où on compare le message reçu / message original ?
+
+Tu as deux possibilités, à toi de choisir selon ce que veut le prof :
+
+---
+
+### ✅ Variante A : comparaison **visuelle** (simple)
+
+* Sur Alice : tu affiches `Message envoyé : <texte>`.
+* Sur Bob : tu affiches `Message reçu (déchiffré) : <texte>`.
+
+Le prof voit que le message reçu est identique au message envoyé → OK.
+
+---
+
+### ✅ Variante B : comparaison **automatique** de bout en bout
+
+Là on fait un aller-retour pour **vérifier automatiquement** :
+
+1. Alice envoie un message **M** à Bob (chiffré avec la clé publique de Bob).
+2. Bob déchiffre → obtient **M'**.
+3. Bob **ré-envoie M'** à Alice, mais cette fois **chiffré avec la clé publique d’Alice**.
+4. Alice déchiffre → obtient **M''**.
+5. Alice compare :
+
+```python
+if M == M_double_prime:
+    print("✅ Message intact, chiffrement/déchiffrement OK.")
+else:
+    print("❌ Erreur : le message final est différent.")
+```
+
+Dans cette variante :
+
+* `bob_server.py` : reçoit, déchiffre, affiche & renvoie.
+* `alice_client.py` : en plus d’envoyer, il **attend une réponse**, la déchiffre avec `alice_private.key`, puis compare au message original.
+
+C’est typiquement le genre de truc que les enseignants aiment bien, car ça **prouve** que toute la chaîne (réseau + RSA) fonctionne.
+
+---
+
+## 5️⃣ Résumé ultra court
+
+* **PC Alice** : dossier `rsa_alice/` avec `common/` + `alice/`
+* **PC Bob**   : dossier `rsa_bob/`   avec `common/` + `bob/`
+* Clés :
+
+  * chaque PC garde **sa clé privée**, échange seulement la **clé publique**.
+* Réseau :
+
+  * Bob lance `bob_server.py`
+  * Alice lance `alice_client.py`
+* Comparaison :
+
+  * soit **à l’œil** (messages affichés),
+  * soit par **aller-retour** avec un `if message_original == message_recu:` côté Alice.
+
+---
+
+Si tu veux, au prochain message je peux commencer à te donner **les vrais fichiers Python**, par ex :
+
+1. `common/rsa_core.py`
+2. `alice/alice_keys.py` + `bob/bob_keys.py`
+
+pour que tu puisses déjà générer des clés sur les deux machines.
