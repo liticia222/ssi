@@ -2,7 +2,7 @@ import socket
 
 client_socket = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
 
-client_socket.connect(('localhost', 12345))
+client_socket.connect(('192.168.116.125', 12345))
 print("Connecte to server")
 
 client_socket.send("Hello from the client".encode())
