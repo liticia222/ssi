@@ -1,90 +1,126 @@
+# user.py
+# Client/serveur simple: échange de clé publique puis échange de messages chiffrés.
+# Usage: lancer ce script sur deux machines (ou deux terminaux) ; chacun essaie de se connecter à l'autre.
+# Si la connexion échoue, le script écoute (mode serveur). Une fois connecté : échange de clé publique, puis envoi/recep.
+
 import socket
 import threading
-from rsa_core import generate_keys, pow  # pow est pour le chiffrement simple
+import json
+import sys
+import os
 
-# Génération clés
-public, private, p, q, phi = generate_keys()
-n, e = public
-n2, d = private
+from keys import load_key, create_keys_file
+from crypto import encrypt_message, decrypt_message, serialize_cipher, parse_cipher
+import utilsnetwork as net
 
-peer_public_key = None
-role = None
-last_message_sent = None
+# ----- Config -----
+DEFAULT_HOST = '192.168.10.125'  # modifie si nécessaire
+PORT = 12345
+KEYS_DIR = "."  # répertoire actuel
 
-def encrypt(message, key):
-    n, e = key
-    return [pow(ord(c), e, n) for c in message]
+PUBLIC_KEY_FILE = os.path.join(KEYS_DIR, "public.key")
+PRIVATE_KEY_FILE = os.path.join(KEYS_DIR, "private.key")
+OTHER_PUBLIC_FILE = os.path.join(KEYS_DIR, "other_public.key")
 
-def decrypt(cipher, key):
-    n, d = key
-    return ''.join([chr(pow(c, d, n)) for c in cipher])
+# ----- Chargement/génération des clés locales -----
+def ensure_keys(bits=32):
+    # crée des clés si elles n'existent pas
+    if not os.path.exists(PUBLIC_KEY_FILE) or not os.path.exists(PRIVATE_KEY_FILE):
+        print("Clés locales absentes : génération (taille demo: {} bits)".format(bits))
+        create_keys_file(bits=bits, public_path=PUBLIC_KEY_FILE, private_path=PRIVATE_KEY_FILE)
+    pub = load_key(PUBLIC_KEY_FILE)
+    priv = load_key(PRIVATE_KEY_FILE)
+    # format (n, e) et (n, d)
+    public = (pub['n'], pub['e'])
+    private = (priv['n'], priv.get('d') or priv.get('u'))  # accepte 'd' ou 'u'
+    return public, private
 
-def handle_receive(sock):
-    global role, peer_public_key
-    while True:
-        try:
-            data = sock.recv(4096)
-            if not data:
-                break
-            # réception de la clé publique
-            if data.startswith(b'PUBKEY:'):
-                n_peer, e_peer = map(int, data[7:].decode().split(','))
-                peer_public_key = (n_peer, e_peer)
-                print(f"Clé publique reçue : {peer_public_key}")
+# ----- Envoi de clé publique -----
+def send_pubkey(sock, public):
+    n, e = public
+    msg = json.dumps({"type": "PUBKEY", "n": n, "e": e}).encode()
+    net.send_msg(sock, msg)
+
+def parse_pubkey(json_bytes):
+    obj = json.loads(json_bytes)
+    if obj.get("type") != "PUBKEY":
+        raise ValueError("Attendu PUBKEY")
+    return (int(obj['n']), int(obj['e']))
+
+# ----- Thread de réception -----
+def handle_receive(sock, private_key, peer_public_container):
+    try:
+        while True:
+            data = net.recv_msg(sock)
+            obj = json.loads(data)
+            typ = obj.get("type")
+            if typ == "PUBKEY":
+                peer_public_container['key'] = (int(obj['n']), int(obj['e']))
+                print("Clé publique du pair reçue :", peer_public_container['key'])
+            elif typ == "CIPHER":
+                cipher = obj.get("data")
+                plaintext = decrypt_message(cipher, private_key)
+                print("\n--- Message reçu (déchiffré) ---")
+                print(plaintext)
+                print("--------------------------------")
+                # Si on veut répondre automatiquement (BOB) : ici on ne répond pas automatiquement
             else:
-                cipher = eval(data.decode())
-                plaintext = decrypt(cipher, private)
-                print(f"\nMessage reçu : {plaintext}")
+                print("Message inconnu reçu :", obj)
+    except Exception as e:
+        print("Erreur réception :", e)
 
-                if role is None:
-                    role = "BOB"
-                    print("Je suis Bob")
-
-                if role == "BOB":
-                    # réponse : chiffrement avec clé publique de l'autre
-                    cipher_response = encrypt(plaintext, peer_public_key)
-                    sock.send(str(cipher_response).encode())
-        except Exception as e:
-            print("Erreur :", e)
-            break
-
+# ----- Boucle principale -----
 def main():
-    global role, peer_public_key, last_message_sent
-
-    host = '192.168.116.125'  # IP de l'autre machine
-    port = 12345
+    public, private = ensure_keys(bits=32)
+    peer_public = {'key': None}
+    host = DEFAULT_HOST
+    port = PORT
 
     s = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+    s.settimeout(2.0)
     try:
         s.connect((host, port))
-        print("Connecté en tant que client")
+        s.settimeout(None)
+        print("Connecté en tant que client à", (host, port))
         role = "ALICE"
-    except:
-        s.bind(("0.0.0.0", port))
-        s.listen(1)
-        print("En attente d'une connexion...")
-        s, addr = s.accept()
-        print(f"Connexion établie avec {addr}")
-        role = None  # rôle sera déterminé plus tard
+    except Exception:
+        # passe en mode serveur
+        s.close()
+        srv = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
+        srv.bind(("0.0.0.0", port))
+        srv.listen(1)
+        print("En attente d'une connexion sur le port", port)
+        conn, addr = srv.accept()
+        s = conn
+        print("Connexion acceptée de", addr)
+        role = "BOB"
 
-    # envoi de la clé publique
-    s.send(f"PUBKEY:{n},{e}".encode())
+    # envoyer la clé publique
+    send_pubkey(s, public)
 
-    # thread pour recevoir les messages
-    threading.Thread(target=handle_receive, args=(s,), daemon=True).start()
+    # démarrer le thread récepteur
+    recv_thread = threading.Thread(target=handle_receive, args=(s, private, peer_public), daemon=True)
+    recv_thread.start()
 
-    # boucle pour envoyer des messages
-    while True:
-        msg = input("Message à envoyer : ")
-        if peer_public_key is None:
-            print("Attente de la clé publique du pair...")
-            continue
-        cipher_msg = encrypt(msg, peer_public_key)
-        last_message_sent = msg
-        s.send(str(cipher_msg).encode())
-        if role is None:
-            role = "ALICE"
-            print("Je suis Alice")
+    # boucle d'envoi
+    try:
+        while True:
+            msg = input("Message à envoyer (ou 'quit' pour sortir) : ")
+            if msg.lower() in ("quit", "exit"):
+                print("Fermeture.")
+                s.close()
+                break
+            if peer_public['key'] is None:
+                print("Attente de la clé publique du pair...")
+                continue
+            cipher = encrypt_message(msg, peer_public['key'])
+            # envoyer en JSON
+            payload = json.dumps({"type":"CIPHER", "data": cipher}).encode()
+            net.send_msg(s, payload)
+            print("Message chiffré envoyé.")
+    except KeyboardInterrupt:
+        print("Interrompu par l'utilisateur.")
+        s.close()
 
 if __name__ == "__main__":
     main()

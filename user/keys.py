@@ -1,37 +1,41 @@
-import sys
+# keys.py
+# Génération, sauvegarde et chargement de clés (format simple clé=valeur par ligne)
+
 import os
-
-# ajoute le dossier "../common" au PYTHONPATH
-current_dir = os.path.dirname(os.path.abspath(__file__))
-common_dir = os.path.join(current_dir, "..", "common")
-sys.path.append(common_dir)
-
 from rsa_core import generate_keys
 
-def save_key(path, data):
+def save_key(path, data: dict):
     with open(path, "w") as f:
         for k, v in data.items():
             f.write(f"{k}={v}\n")
 
-def create_keys():
-    public, private, p, q, m = generate_keys()
+def load_key(path):
+    """Charge une clé à partir d'un fichier 'k=v' par ligne. Retourne dict."""
+    if not os.path.exists(path):
+        raise FileNotFoundError(f"{path} introuvable")
+    data = {}
+    with open(path, "r") as f:
+        for line in f:
+            line = line.strip()
+            if not line or '=' not in line:
+                continue
+            k, v = line.split('=', 1)
+            data[k] = int(v)
+    return data
 
-    n, e = public
-    n2, u = private
-
-    # clé publique
-    save_key("public.key", {"n": n, "e": e})
-
-    # clé privée
-    save_key("private.key", {"n": n2, "u": u})
-
-    print("Clés Alice générées avec succès !")
+def create_keys_file(bits=32, public_path="public.key", private_path="private.key"):
+    pub, priv, p, q, phi = generate_keys(bits=bits)
+    n, e = pub
+    n2, d = priv
+    save_key(public_path, {"n": n, "e": e})
+    save_key(private_path, {"n": n2, "d": d})
+    print("Clés générées :")
     print("p =", p)
     print("q =", q)
     print("n =", n)
-    print("m =", m)
+    print("phi =", phi)
     print("e =", e)
-    print("u =", u)
+    print("d =", d)
 
 if __name__ == "__main__":
-    create_keys()
+    create_keys_file(bits=32)
