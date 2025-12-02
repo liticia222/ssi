@@ -1,62 +1,92 @@
-## CODE TEMPORAIRE EN ATTENDANT CELUI DE LITICIA
 import random
 from math import gcd
 
-# Test de primalité simple (suffisant pour un exercice)
-def is_prime(n, k=20):
+# -----------------------------
+# Générer un nombre premier probable
+# (équivalent de BigInteger.probablePrime)
+# -----------------------------
+def probable_prime(bits=2048):
+    while True:
+        n = random.getrandbits(bits)
+        # forcer un nombre impair
+        n |= 1
+        if is_probable_prime(n):
+            return n
+
+# Test de primalité Miller-Rabin
+def is_probable_prime(n, k=20):
     if n < 2:
         return False
+    if n in (2, 3):
+        return True
     if n % 2 == 0:
-        return n == 2
+        return False
 
-    # Test de Fermat / Miller-Rabin simplifié
+    # décomposition n-1 = d * 2^r
+    r = 0
     d = n - 1
-    s = 0
     while d % 2 == 0:
         d //= 2
-        s += 1
+        r += 1
 
     for _ in range(k):
-        a = random.randrange(2, n - 1)
+        a = random.randrange(2, n - 2)
         x = pow(a, d, n)
-        if x == 1 or x == n - 1:
+
+        if x in (1, n - 1):
             continue
-        for _ in range(s - 1):
+
+        for _ in range(r - 1):
             x = pow(x, 2, n)
             if x == n - 1:
                 break
         else:
             return False
+
     return True
 
-def generate_prime(bits=16):
-    while True:
-        n = random.getrandbits(bits)
-        n |= 1  # force impair
-        if is_prime(n):
-            return n
+# -----------------------------
+# Algorithme d’Euclide Étendu
+# (équivalent algoEuclide du Java)
+# -----------------------------
+def extended_gcd(a, b):
+    if b == 0:
+        return (a, 1, 0)
+    g, u, v = extended_gcd(b, a % b)
+    return (g, v, u - (a // b) * v)
 
-def generate_keys():
-    # deux nombres premiers p et q
-    p = generate_prime(16)
-    q = generate_prime(16)
+# -----------------------------
+# Génération des clés RSA
+# -----------------------------
+def generate_keys(bits=2048):
+    # p et q grands entiers premiers
+    p = probable_prime(bits)
+    q = probable_prime(bits)
     while q == p:
-        q = generate_prime(16)
+        q = probable_prime(bits)
 
+    # n = p * q
     n = p * q
-    phi = (p - 1) * (q - 1)
 
-    # e public : 65537 ou autre
-    e = 65537
-    # s'assurer que e et phi sont coprimes
-    while gcd(e, phi) != 1:
-        e += 2
+    # m = (p - 1)*(q - 1)
+    m = (p - 1) * (q - 1)
 
-    # calcul de d = inverse modulaire de e mod phi
-    d = pow(e, -1, phi)
+    # e nombre impair premier avec m
+    # (équivalent du new BigInteger(512, new Random()) dans ton Java)
+    while True:
+        e = random.getrandbits(512)
+        if e % 2 == 0:
+            e -= 1
+        if gcd(e, m) == 1:
+            break
 
-    # Retour au format attendu par ton script
-    public = (n, e)
-    private = (n, d)
+    # calcul de u (comme ton algoEuclide)
+    g, u, v = extended_gcd(e, m)
 
-    return public, private, p, q, phi
+    # on doit avoir u > 0
+    u = u % m
+
+    public_key = (n, e)
+    private_key = (n, u)
+
+    return public_key, private_key, p, q, m
